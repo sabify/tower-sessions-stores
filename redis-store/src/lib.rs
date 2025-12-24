@@ -1,11 +1,7 @@
-use std::fmt::Debug;
-
 use async_trait::async_trait;
-pub use fred;
-use fred::{
-    prelude::KeysInterface,
-    types::{Expiration, SetOptions},
-};
+pub use redis;
+use redis::{AsyncTypedCommands, Client, ExistenceCheck, RedisError, SetExpiry, SetOptions};
+use std::fmt::Debug;
 use time::OffsetDateTime;
 use tower_sessions_core::{
     session::{Id, Record},
@@ -15,7 +11,7 @@ use tower_sessions_core::{
 #[derive(Debug, thiserror::Error)]
 pub enum RedisStoreError {
     #[error(transparent)]
-    Redis(#[from] fred::error::Error),
+    Redis(#[from] RedisError),
 
     #[error(transparent)]
     Decode(#[from] rmp_serde::decode::Error),
@@ -35,13 +31,13 @@ impl From<RedisStoreError> for session_store::Error {
 }
 
 /// A Redis session store.
-#[derive(Debug, Clone, Default)]
-pub struct RedisStore<C: KeysInterface + Send + Sync> {
-    client: C,
+#[derive(Debug, Clone)]
+pub struct RedisStore {
+    client: Client,
     prefix: Option<String>,
 }
 
-impl<C: KeysInterface + Send + Sync> RedisStore<C> {
+impl RedisStore {
     /// Create a new Redis store with the provided client.
     ///
     /// # Examples
@@ -58,8 +54,11 @@ impl<C: KeysInterface + Send + Sync> RedisStore<C> {
     /// let session_store = RedisStore::new(pool);
     /// })
     /// ```
-    pub fn new(client: C) -> Self {
-        Self { client, prefix: None }
+    pub fn new(client: Client) -> Self {
+        Self {
+            client,
+            prefix: None,
+        }
     }
 
     /// Create a new Redis store with the provided client and prefix.
@@ -78,8 +77,11 @@ impl<C: KeysInterface + Send + Sync> RedisStore<C> {
     /// let session_store = RedisStore::with_prefix(pool, "session:".to_string());
     /// })
     /// ```
-    pub fn with_prefix(client: C, prefix: String) -> Self {
-        Self { client, prefix: Some(prefix) }
+    pub fn with_prefix(client: Client, prefix: String) -> Self {
+        Self {
+            client,
+            prefix: Some(prefix),
+        }
     }
 
     fn get_key(&self, id: &Id) -> String {
@@ -95,34 +97,41 @@ impl<C: KeysInterface + Send + Sync> RedisStore<C> {
         record: &Record,
         options: Option<SetOptions>,
     ) -> session_store::Result<bool> {
-        let expire = Some(Expiration::EXAT(OffsetDateTime::unix_timestamp(
-            record.expiry_date,
-        )));
-
-        Ok(self
+        let expire_timestamp = OffsetDateTime::unix_timestamp(record.expiry_date) as u64;
+        let options = if let Some(options) = options {
+            options.with_expiration(SetExpiry::EXAT(expire_timestamp))
+        } else {
+            SetOptions::default().with_expiration(SetExpiry::EXAT(expire_timestamp))
+        };
+        let result = self
             .client
-            .set(
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(RedisStoreError::Redis)?
+            .set_options(
                 self.get_key(&record.id),
                 rmp_serde::to_vec(&record)
                     .map_err(RedisStoreError::Encode)?
                     .as_slice(),
-                expire,
                 options,
-                false,
             )
             .await
-            .map_err(RedisStoreError::Redis)?)
+            .map_err(RedisStoreError::Redis)?;
+        Ok(result.is_some())
     }
 }
 
 #[async_trait]
-impl<C> SessionStore for RedisStore<C>
-where
-    C: KeysInterface + Send + Sync + Debug + 'static,
-{
+impl SessionStore for RedisStore {
     async fn create(&self, record: &mut Record) -> session_store::Result<()> {
         loop {
-            if !self.save_with_options(record, Some(SetOptions::NX)).await? {
+            if !self
+                .save_with_options(
+                    record,
+                    Some(SetOptions::default().conditional_set(ExistenceCheck::NX)),
+                )
+                .await?
+            {
                 record.id = Id::default();
                 continue;
             }
@@ -132,20 +141,27 @@ where
     }
 
     async fn save(&self, record: &Record) -> session_store::Result<()> {
-        self.save_with_options(record, Some(SetOptions::XX)).await?;
+        self.save_with_options(
+            record,
+            Some(SetOptions::default().conditional_set(ExistenceCheck::XX)),
+        )
+        .await?;
         Ok(())
     }
 
     async fn load(&self, session_id: &Id) -> session_store::Result<Option<Record>> {
         let data = self
             .client
-            .get::<Option<Vec<u8>>, _>(self.get_key(session_id))
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(RedisStoreError::Redis)?
+            .get(self.get_key(session_id))
             .await
             .map_err(RedisStoreError::Redis)?;
 
         if let Some(data) = data {
             Ok(Some(
-                rmp_serde::from_slice(&data).map_err(RedisStoreError::Decode)?,
+                rmp_serde::from_slice(data.as_bytes()).map_err(RedisStoreError::Decode)?,
             ))
         } else {
             Ok(None)
@@ -153,8 +169,10 @@ where
     }
 
     async fn delete(&self, session_id: &Id) -> session_store::Result<()> {
-        let _: () = self
-            .client
+        self.client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(RedisStoreError::Redis)?
             .del(self.get_key(session_id))
             .await
             .map_err(RedisStoreError::Redis)?;

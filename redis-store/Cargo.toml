@@ -13,27 +13,26 @@ documentation = "https://docs.rs/tower-sessions-redis-store"
 readme = "README.md"
 
 [dependencies]
-async-trait = "0.1.77"
-fred = "10.0"
-rmp-serde = "1.1.2"
+async-trait = "0.1.89"
+redis = "1.0"
+rmp-serde = "1.3"
 thiserror = "2.0"
-time = "0.3.31"
+time = "0.3.44"
 tower-sessions-core = "0.14.0"
 
 [dev-dependencies]
-axum = "0.8.1"
+axum = "0.8.8"
 tower-sessions = "0.14.0"
-tokio = { version = "1.32.0", features = ["full"] }
-tokio-test = "0.4.3"
-serde = "1"
+tokio = { version = "1.48", features = ["full"] }
+tokio-test = "0.4.4"
+serde = "1.0"
 
 [features]
 # Enable `fred` TLS support via native-tls
-enable-native-tls = ["fred/enable-native-tls"]
+enable-native-tls = ["redis/tokio-native-tls-comp"]
 # Enable `fred` TLS support via rustls with the default crypto backend features
-enable-rustls = ["fred/enable-rustls"]
-# Enable the `openssl/vendored` feature
-vendored-openssl = ["fred/vendored-openssl"]
+enable-rustls = ["redis/tokio-rustls-comp", "redis/tls-rustls-webpki-roots"]
+connection-manager = ["redis/connection-manager"]
 
 [[example]]
 name = "redis"
