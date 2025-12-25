@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 pub use redis;
-use redis::{AsyncTypedCommands, Client, ExistenceCheck, RedisError, SetExpiry, SetOptions};
+use redis::{AsyncCommands, Client, ExistenceCheck, RedisError, SetExpiry, SetOptions};
 use std::fmt::Debug;
 use time::OffsetDateTime;
 use tower_sessions_core::{
@@ -103,21 +103,19 @@ impl RedisStore {
         } else {
             SetOptions::default().with_expiration(SetExpiry::EXAT(expire_timestamp))
         };
-        let result = self
+        let result: bool = self
             .client
             .get_multiplexed_async_connection()
             .await
             .map_err(RedisStoreError::Redis)?
             .set_options(
                 self.get_key(&record.id),
-                rmp_serde::to_vec(&record)
-                    .map_err(RedisStoreError::Encode)?
-                    .as_slice(),
+                rmp_serde::to_vec(&record).map_err(RedisStoreError::Encode)?,
                 options,
             )
             .await
             .map_err(RedisStoreError::Redis)?;
-        Ok(result.is_some())
+        Ok(result)
     }
 }
 
@@ -150,7 +148,7 @@ impl SessionStore for RedisStore {
     }
 
     async fn load(&self, session_id: &Id) -> session_store::Result<Option<Record>> {
-        let data = self
+        let data: Option<Vec<u8>> = self
             .client
             .get_multiplexed_async_connection()
             .await
@@ -161,7 +159,7 @@ impl SessionStore for RedisStore {
 
         if let Some(data) = data {
             Ok(Some(
-                rmp_serde::from_slice(data.as_bytes()).map_err(RedisStoreError::Decode)?,
+                rmp_serde::from_slice(&data).map_err(RedisStoreError::Decode)?,
             ))
         } else {
             Ok(None)
@@ -173,7 +171,7 @@ impl SessionStore for RedisStore {
             .get_multiplexed_async_connection()
             .await
             .map_err(RedisStoreError::Redis)?
-            .del(self.get_key(session_id))
+            .del::<_, isize>(self.get_key(session_id))
             .await
             .map_err(RedisStoreError::Redis)?;
         Ok(())
