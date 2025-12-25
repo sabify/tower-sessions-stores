@@ -43,15 +43,12 @@ impl RedisStore {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use tower_sessions_redis_store::{fred::prelude::*, RedisStore};
+    /// use tower_sessions_redis_store::{redis, RedisStore};
     ///
     /// # tokio_test::block_on(async {
-    /// let pool = Pool::new(Config::default(), None, None, None, 6).unwrap();
+    /// let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     ///
-    /// let _ = pool.connect();
-    /// pool.wait_for_connect().await.unwrap();
-    ///
-    /// let session_store = RedisStore::new(pool);
+    /// let session_store = RedisStore::new(client);
     /// })
     /// ```
     pub fn new(client: Client) -> Self {
@@ -66,15 +63,12 @@ impl RedisStore {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use tower_sessions_redis_store::{fred::prelude::*, RedisStore};
+    /// use tower_sessions_redis_store::{redis, RedisStore};
     ///
     /// # tokio_test::block_on(async {
-    /// let pool = Pool::new(Config::default(), None, None, None, 6).unwrap();
+    /// let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     ///
-    /// let _ = pool.connect();
-    /// pool.wait_for_connect().await.unwrap();
-    ///
-    /// let session_store = RedisStore::with_prefix(pool, "session:".to_string());
+    /// let session_store = RedisStore::with_prefix(client, "session:".to_string());
     /// })
     /// ```
     pub fn with_prefix(client: Client, prefix: String) -> Self {
