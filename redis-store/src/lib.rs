@@ -1,7 +1,12 @@
 use async_trait::async_trait;
 pub use redis;
-use redis::{AsyncCommands, Client, ExistenceCheck, RedisError, SetExpiry, SetOptions};
-use std::fmt::Debug;
+use redis::{
+    AsyncCommands, AsyncConnectionConfig, Client, ExistenceCheck, RedisError, SetExpiry, SetOptions,
+};
+use std::{
+    fmt::Debug,
+    ops::{Deref, DerefMut},
+};
 use time::OffsetDateTime;
 use tower_sessions_core::{
     session::{Id, Record},
@@ -30,11 +35,55 @@ impl From<RedisStoreError> for session_store::Error {
     }
 }
 
+/// A Redis client.
+#[derive(Clone)]
+pub struct RedisClient {
+    pub client: Client,
+    pub config: AsyncConnectionConfig,
+}
+
+impl Debug for RedisClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RedisClient")
+            .field("client", &self.client)
+            .field("config", &"<REDACTED>")
+            .finish()
+    }
+}
+
+impl Deref for RedisClient {
+    type Target = Client;
+
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
+}
+
+impl DerefMut for RedisClient {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.client
+    }
+}
+
 /// A Redis session store.
 #[derive(Debug, Clone)]
 pub struct RedisStore {
-    client: Client,
+    client: RedisClient,
     prefix: Option<String>,
+}
+
+impl Deref for RedisStore {
+    type Target = RedisClient;
+
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
+}
+
+impl DerefMut for RedisStore {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.client
+    }
 }
 
 impl RedisStore {
@@ -51,7 +100,7 @@ impl RedisStore {
     /// let session_store = RedisStore::new(client);
     /// })
     /// ```
-    pub fn new(client: Client) -> Self {
+    pub fn new(client: RedisClient) -> Self {
         Self {
             client,
             prefix: None,
@@ -71,7 +120,7 @@ impl RedisStore {
     /// let session_store = RedisStore::with_prefix(client, "session:".to_string());
     /// })
     /// ```
-    pub fn with_prefix(client: Client, prefix: String) -> Self {
+    pub fn with_prefix(client: RedisClient, prefix: String) -> Self {
         Self {
             client,
             prefix: Some(prefix),
@@ -99,7 +148,7 @@ impl RedisStore {
         };
         let result: bool = self
             .client
-            .get_multiplexed_async_connection()
+            .get_multiplexed_async_connection_with_config(&self.client.config)
             .await
             .map_err(RedisStoreError::Redis)?
             .set_options(
@@ -144,7 +193,7 @@ impl SessionStore for RedisStore {
     async fn load(&self, session_id: &Id) -> session_store::Result<Option<Record>> {
         let data: Option<Vec<u8>> = self
             .client
-            .get_multiplexed_async_connection()
+            .get_multiplexed_async_connection_with_config(&self.client.config)
             .await
             .map_err(RedisStoreError::Redis)?
             .get(self.get_key(session_id))
@@ -162,7 +211,7 @@ impl SessionStore for RedisStore {
 
     async fn delete(&self, session_id: &Id) -> session_store::Result<()> {
         self.client
-            .get_multiplexed_async_connection()
+            .get_multiplexed_async_connection_with_config(&self.client.config)
             .await
             .map_err(RedisStoreError::Redis)?
             .del::<_, isize>(self.get_key(session_id))
