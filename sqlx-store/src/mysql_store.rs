@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use sqlx::{MySqlConnection, MySqlPool};
+use sqlx::{AssertSqlSafe, MySqlConnection, MySqlPool};
 use time::OffsetDateTime;
 use tower_sessions_core::{
     session::{Id, Record},
@@ -91,7 +91,9 @@ impl MySqlStore {
             "create schema if not exists {schema_name}",
             schema_name = self.schema_name,
         );
-        sqlx::query(&create_schema_query).execute(&mut *tx).await?;
+        sqlx::query(AssertSqlSafe(create_schema_query))
+            .execute(&mut *tx)
+            .await?;
 
         let create_table_query = format!(
             r#"
@@ -105,7 +107,9 @@ impl MySqlStore {
             schema_name = self.schema_name,
             table_name = self.table_name
         );
-        sqlx::query(&create_table_query).execute(&mut *tx).await?;
+        sqlx::query(AssertSqlSafe(create_table_query))
+            .execute(&mut *tx)
+            .await?;
 
         tx.commit().await?;
 
@@ -121,7 +125,7 @@ impl MySqlStore {
             table_name = self.table_name
         );
 
-        Ok(sqlx::query_scalar(&query)
+        Ok(sqlx::query_scalar(AssertSqlSafe(query))
             .bind(id.to_string())
             .fetch_one(conn)
             .await
@@ -144,7 +148,7 @@ impl MySqlStore {
             schema_name = self.schema_name,
             table_name = self.table_name
         );
-        sqlx::query(&query)
+        sqlx::query(AssertSqlSafe(query))
             .bind(record.id.to_string())
             .bind(rmp_serde::to_vec(&record).map_err(SqlxStoreError::Encode)?)
             .bind(record.expiry_date)
@@ -166,7 +170,7 @@ impl ExpiredDeletion for MySqlStore {
             schema_name = self.schema_name,
             table_name = self.table_name
         );
-        sqlx::query(&query)
+        sqlx::query(AssertSqlSafe(query))
             .execute(&self.pool)
             .await
             .map_err(SqlxStoreError::Sqlx)?;
@@ -180,7 +184,7 @@ impl SessionStore for MySqlStore {
         let mut tx = self.pool.begin().await.map_err(SqlxStoreError::Sqlx)?;
 
         while self.id_exists(&mut tx, &record.id).await? {
-            record.id = Id::default();
+            record.id = Id::new().map_err(|e| session_store::Error::Backend(e.to_string()))?;
         }
         self.save_with_conn(&mut tx, record).await?;
 
@@ -203,7 +207,7 @@ impl SessionStore for MySqlStore {
             schema_name = self.schema_name,
             table_name = self.table_name
         );
-        let data: Option<(Vec<u8>,)> = sqlx::query_as(&query)
+        let data: Option<(Vec<u8>,)> = sqlx::query_as(AssertSqlSafe(query))
             .bind(session_id.to_string())
             .bind(OffsetDateTime::now_utc())
             .fetch_optional(&self.pool)
@@ -225,7 +229,7 @@ impl SessionStore for MySqlStore {
             schema_name = self.schema_name,
             table_name = self.table_name
         );
-        sqlx::query(&query)
+        sqlx::query(AssertSqlSafe(query))
             .bind(session_id.to_string())
             .execute(&self.pool)
             .await

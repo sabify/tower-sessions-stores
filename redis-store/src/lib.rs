@@ -92,10 +92,13 @@ impl RedisStore {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use tower_sessions_redis_store::{redis, RedisStore};
+    /// use tower_sessions_redis_store::{redis, RedisClient, RedisStore};
     ///
     /// # tokio_test::block_on(async {
-    /// let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    /// let client = RedisClient {
+    ///     client: redis::Client::open("redis://127.0.0.1/").unwrap(),
+    ///     config: redis::AsyncConnectionConfig::default(),
+    /// };
     ///
     /// let session_store = RedisStore::new(client);
     /// })
@@ -112,10 +115,13 @@ impl RedisStore {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use tower_sessions_redis_store::{redis, RedisStore};
+    /// use tower_sessions_redis_store::{redis, RedisClient, RedisStore};
     ///
     /// # tokio_test::block_on(async {
-    /// let client = redis::Client::open("redis://127.0.0.1/").unwrap();
+    /// let client = RedisClient {
+    ///     client: redis::Client::open("redis://127.0.0.1/").unwrap(),
+    ///     config: redis::AsyncConnectionConfig::default(),
+    /// };
     ///
     /// let session_store = RedisStore::with_prefix(client, "session:".to_string());
     /// })
@@ -173,7 +179,7 @@ impl SessionStore for RedisStore {
                 )
                 .await?
             {
-                record.id = Id::default();
+                record.id = Id::new().map_err(|e| session_store::Error::Backend(e.to_string()))?;
                 continue;
             }
             break;

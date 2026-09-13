@@ -47,7 +47,7 @@ impl MokaStore {
 impl SessionStore for MokaStore {
     async fn create(&self, record: &mut Record) -> session_store::Result<()> {
         while self.cache.contains_key(&record.id) {
-            record.id = Id::default();
+            record.id = Id::new().map_err(|e| session_store::Error::Backend(e.to_string()))?;
         }
         self.cache.insert(record.id, record.clone()).await;
         Ok(())

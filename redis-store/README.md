@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-    Redis via `fred` session store for `tower-sessions`.
+    Redis session store for `tower-sessions`.
 </p>
 
 ## 🤸 Usage
@@ -15,7 +15,7 @@ use axum::{response::IntoResponse, routing::get, Router};
 use serde::{Deserialize, Serialize};
 use time::Duration;
 use tower_sessions::{Expiry, Session, SessionManagerLayer};
-use tower_sessions_redis_store::{fred::prelude::*, RedisStore};
+use tower_sessions_redis_store::{redis, RedisClient, RedisStore};
 
 const COUNTER_KEY: &str = "counter";
 
@@ -30,12 +30,12 @@ async fn handler(session: Session) -> impl IntoResponse {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let pool = Pool::new(Config::default(), None, None, None, 6)?;
+    let client = RedisClient {
+        client: redis::Client::open("redis://127.0.0.1/")?,
+        config: redis::AsyncConnectionConfig::default(),
+    };
 
-    let redis_conn = pool.connect();
-    pool.wait_for_connect().await?;
-
-    let session_store = RedisStore::new(pool);
+    let session_store = RedisStore::new(client);
     let session_layer = SessionManagerLayer::new(session_store)
         .with_secure(false)
         .with_expiry(Expiry::OnInactivity(Duration::seconds(10)));
@@ -45,8 +45,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app.into_make_service()).await?;
-
-    redis_conn.await??;
 
     Ok(())
 }

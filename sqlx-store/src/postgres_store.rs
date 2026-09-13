@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use sqlx::{PgConnection, PgPool};
+use sqlx::{AssertSqlSafe, PgConnection, PgPool};
 use time::OffsetDateTime;
 use tower_sessions_core::{
     session::{Id, Record},
@@ -94,7 +94,10 @@ impl PostgresStore {
         // Concurrent create schema may fail due to duplicate key violations.
         //
         // This works around that by assuming the schema must exist on such an error.
-        if let Err(err) = sqlx::query(&create_schema_query).execute(&mut *tx).await {
+        if let Err(err) = sqlx::query(AssertSqlSafe(create_schema_query))
+            .execute(&mut *tx)
+            .await
+        {
             if !err
                 .to_string()
                 .contains("duplicate key value violates unique constraint")
@@ -117,7 +120,9 @@ impl PostgresStore {
             schema_name = self.schema_name,
             table_name = self.table_name
         );
-        sqlx::query(&create_table_query).execute(&mut *tx).await?;
+        sqlx::query(AssertSqlSafe(create_table_query))
+            .execute(&mut *tx)
+            .await?;
 
         tx.commit().await?;
 
@@ -133,7 +138,7 @@ impl PostgresStore {
             table_name = self.table_name
         );
 
-        Ok(sqlx::query_scalar(&query)
+        Ok(sqlx::query_scalar(AssertSqlSafe(query))
             .bind(id.to_string())
             .fetch_one(conn)
             .await
@@ -157,7 +162,7 @@ impl PostgresStore {
             schema_name = self.schema_name,
             table_name = self.table_name
         );
-        sqlx::query(&query)
+        sqlx::query(AssertSqlSafe(query))
             .bind(record.id.to_string())
             .bind(rmp_serde::to_vec(&record).map_err(SqlxStoreError::Encode)?)
             .bind(record.expiry_date)
@@ -180,7 +185,7 @@ impl ExpiredDeletion for PostgresStore {
             schema_name = self.schema_name,
             table_name = self.table_name
         );
-        sqlx::query(&query)
+        sqlx::query(AssertSqlSafe(query))
             .execute(&self.pool)
             .await
             .map_err(SqlxStoreError::Sqlx)?;
@@ -194,7 +199,7 @@ impl SessionStore for PostgresStore {
         let mut tx = self.pool.begin().await.map_err(SqlxStoreError::Sqlx)?;
 
         while self.id_exists(&mut tx, &record.id).await? {
-            record.id = Id::default();
+            record.id = Id::new().map_err(|e| session_store::Error::Backend(e.to_string()))?;
         }
         self.save_with_conn(&mut tx, record).await?;
 
@@ -217,7 +222,7 @@ impl SessionStore for PostgresStore {
             schema_name = self.schema_name,
             table_name = self.table_name
         );
-        let record_value: Option<(Vec<u8>,)> = sqlx::query_as(&query)
+        let record_value: Option<(Vec<u8>,)> = sqlx::query_as(AssertSqlSafe(query))
             .bind(session_id.to_string())
             .bind(OffsetDateTime::now_utc())
             .fetch_optional(&self.pool)
@@ -239,7 +244,7 @@ impl SessionStore for PostgresStore {
             schema_name = self.schema_name,
             table_name = self.table_name
         );
-        sqlx::query(&query)
+        sqlx::query(AssertSqlSafe(query))
             .bind(session_id.to_string())
             .execute(&self.pool)
             .await

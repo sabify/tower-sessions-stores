@@ -22,20 +22,19 @@ mod moka_store_tests {
 mod redis_store_tests {
     use axum::Router;
     use tower_sessions::SessionManagerLayer;
-    use tower_sessions_redis_store::{fred::prelude::*, RedisStore};
+    use tower_sessions_redis_store::{redis, RedisClient, RedisStore};
 
     use crate::common::build_app;
 
     async fn app(max_age: Option<Duration>) -> Router {
         let database_url = std::option_env!("REDIS_URL").unwrap();
 
-        let config = Config::from_url(database_url).unwrap();
-        let pool = Pool::new(config, None, None, None, 6).unwrap();
+        let client = RedisClient {
+            client: redis::Client::open(database_url).unwrap(),
+            config: redis::AsyncConnectionConfig::default(),
+        };
 
-        pool.connect();
-        pool.wait_for_connect().await.unwrap();
-
-        let session_store = RedisStore::new(pool);
+        let session_store = RedisStore::new(client);
         let session_manager = SessionManagerLayer::new(session_store).with_secure(true);
 
         build_app(session_manager, max_age)
